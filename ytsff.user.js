@@ -1,11 +1,11 @@
 // ==UserScript==
 // @name        YouTube Sub Feed Filter
-// @version     1.0
+// @version     1.1
 // @description Filters your YouTube subscriptions feed.
 // @match       *://www.youtube.com/*
 // @match       *://youtube.com/*
 // @namespace   https://greasyfork.org/users/696211-ctl2
-// @require     https://greasyfork.org/scripts/419978-key-based-config/code/Key-Based%20Config.js?version=956385
+// @require     https://greasyfork.org/scripts/419978-key-based-config/code/Key-Based%20Config.js?version=956708
 // @grant       GM.setValue
 // @grant       GM.getValue
 // ==/UserScript==
@@ -41,37 +41,37 @@ SUB[ORDERING.ENABLED] = {
 SUB[ORDERING.STREAMS.SCHEDULED] = {
     label: 'Streams (scheduled)',
     type: 'string',
-    default: '.^'
+    default: '^'
 };
 SUB[ORDERING.STREAMS.SCHEDULED] = {
     label: 'Streams (scheduled)',
     type: 'string',
-    default: '.^'
+    default: '^'
 };
 SUB[ORDERING.STREAMS.LIVE] = {
     label: 'Streams (live)',
     type: 'string',
-    default: '.^'
+    default: '^'
 };
 SUB[ORDERING.STREAMS.FINISHED] = {
     label: 'Streams (finished)',
     type: 'string',
-    default: '.^'
+    default: '^'
 };
 SUB[ORDERING.PREMIERS.SCHEDULED] = {
     label: 'Premiers (scheduled)',
     type: 'string',
-    default: '.^'
+    default: '^'
 };
 SUB[ORDERING.PREMIERS.LIVE] = {
     label: 'Premiers (live)',
     type: 'string',
-    default: '.^'
+    default: '^'
 };
 SUB[ORDERING.OTHERS] = {
     label: 'Others',
     type: 'string',
-    default: '.^'
+    default: '^'
 };
 
 const TITLE = 'YouTube Sub Feed Filter';
@@ -79,77 +79,19 @@ const KEY = 'ytsff';
 const META = {
     label: 'Channels',
     type: 'string',
-    default: '.^',
+    default: '(^Channel Name$)',
     sub: SUB
 };
 
-// Data storage helpers
-
-function updateConfig(filter) {
-    // Show all videos
-    hideFromSections();
-
-    // Hide filtered videos
-    hideFromSections(filter);
-}
-
-function buildConfigButton() {
-    const openerParent = document.querySelector('#title-container').querySelector('#top-level-buttons-computed');
-    const [openerTemplate] = openerParent.children;
-    const opener = openerTemplate.cloneNode(false);
-
-    openerParent.appendChild(opener);
-    opener.classList.remove('style-blue-text');
-    opener.innerHTML = openerTemplate.innerHTML;
-
-    opener.querySelector('button').innerHTML = openerTemplate.querySelector('button').innerHTML;
-
-    opener.querySelector('a').removeAttribute('href');
-
-    // TODO Build the svg via javascript
-    opener.querySelector('yt-icon').innerHTML = `
-<svg
-    viewBox="0 0 24 24"
-    preserveAspectRatio="xMidYMid meet"
-    focusable="false"
-    style="
-        pointer-events: none;
-        display: block;
-        width: 20px;
-        height: 20px;
-    "
-    class="style-scope yt-icon"
->
-    <g class="style-scope yt-icon">
-        <path
-            d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.1-1.65c.2-.15.25-.42.13-.64l-2-3.46c-.12-.22-.4-.3-.6-.22l-2.5 1c-.52-.4-1.08-.73-1.7-.98l-.37-2.65c-.06-.24-.27-.42-.5-.42h-4c-.27 0-.48.18-.5.42l-.4 2.65c-.6.25-1.17.6-1.7.98l-2.48-1c-.23-.1-.5 0-.6.22l-2 3.46c-.14.22-.08.5.1.64l2.12 1.65c-.04.32-.07.65-.07.98s.02.66.06.98l-2.1 1.65c-.2.15-.25.42-.13.64l2 3.46c.12.22.4.3.6.22l2.5-1c.52.4 1.08.73 1.7.98l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.6-.25 1.17-.6 1.7-.98l2.48 1c.23.1.5 0 .6-.22l2-3.46c.13-.22.08-.5-.1-.64l-2.12-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"
-            class="style-scope yt-icon"
-        >
-        </path>
-    </g>
-</svg>
-    `;
-
-    opener.addEventListener('click', () => {
-        const promise = kbcConfigure(KEY, TITLE, META, {'zIndex': 10000});
-
-        promise.then((newConfig) => {
-            updateConfig(newConfig);
-        }).catch((error) => {
-            console.error(error);
-
-            if (window.confirm(
-                'An error was thrown by Key-Based Config, indicating that your data may be corrupted.\n' +
-                'Error Message: ' + error + '\n\n' +
-                'Would you like to clear your saved configs?'
-            )) {
-                GM.setValue(KEY, []);
-            }
-        });
-    });
-}
-
 // Collector helpers
+
+function getAllSections() {
+    return [...document.querySelectorAll('ytd-item-section-renderer')];
+}
+
+function getAllVideos(section) {
+    return [...section.querySelectorAll('ytd-grid-video-renderer')];
+}
 
 function firstWordEquals(element, word) {
     return element.innerText.split(' ')[0] === word;
@@ -165,11 +107,11 @@ function getMetadataLine(video) {
 
 // Hider helpers
 
-class VideoSectionSplitter {
+class SectionSplitter {
     hideables = [];
 
-    constructor(videoSection) {
-        this.nonHideables = videoSection.querySelectorAll('ytd-grid-video-renderer');
+    constructor(section) {
+        this.nonHideables = getAllVideos(section);
     }
 
     split(channelRegex, titleRegex, predicate = (() => true)) {
@@ -242,25 +184,47 @@ class VideoSectionSplitter {
     }
 }
 
-function hide(element) {
-    element.style.display = 'none';
+function hideSection(section, doHide = true) {
+    if (section.matches(':first-child')) {
+        const title = section.querySelector('#title');
+        const videoContainer = section.querySelector('#contents').querySelector('#contents');
+
+        if (doHide) {
+            title.style.display = 'none';
+            videoContainer.style.display = 'none';
+            section.style.borderBottom = 'none';
+        } else {
+            title.style.removeProperty('display');
+            videoContainer.style.removeProperty('display');
+            section.style.removeProperty('borderBottom');
+        }
+    } else {
+        if (doHide) {
+            section.style.display = 'none';
+        } else {
+            section.style.removeProperty('display');
+        }
+    }
 }
 
-function show(element) {
-    element.style.removeProperty('display');
+function hideVideo(video, doHide = true) {
+    if (doHide) {
+        video.style.display = 'none';
+    } else {
+        video.style.removeProperty('display');
+    }
 }
 
 // Hider
 
-function hideFromSections(
-    // Default to no filter
-    filter = [],
-    // Default to all currently rendered sections
-    sections = [...document.querySelectorAll('ytd-item-section-renderer')]
-) {
+function hideFromSections(filter = [], sections = getAllSections()) {
     for (const section of sections) {
+        if (section.matches('ytd-continuation-item-renderer')) {
+            continue;
+        }
+
         // Collect hideables and non-hideables
-        const splitter = new VideoSectionSplitter(section);
+        const splitter = new SectionSplitter(section);
 
         for (const {'value': channel, sub} of filter) {
             const config = sub.map(({value}) => value);
@@ -281,18 +245,12 @@ function hideFromSections(
         }
 
         if (splitter.nonHideables.length === 0) {
-            //TODO re-add?
-
             // Hide full section (including title)
-//             hide(videoSection);
+            hideSection(section);
         } else {
             // Hide hideable videos
-            for (const hideable of splitter.hideables) {
-                hide(hideable);
-            }
-
-            for (const hideable of splitter.nonHideables) {
-                show(hideable);
+            for (const video of splitter.hideables) {
+                hideVideo(video);
             }
         }
     }
@@ -310,6 +268,81 @@ async function hideFromMutations(mutations) {
     }
 
     hideFromSections(await GM.getValue(KEY, []), sections);
+}
+
+// Data storage helpers
+
+function resetConfig() {
+    for (const section of getAllSections()) {
+        hideSection(section, false);
+
+        for (const video of getAllVideos(section)) {
+            hideVideo(video, false);
+        }
+    }
+}
+
+function updateConfig(filter) {
+    resetConfig();
+
+    // Hide filtered videos
+    hideFromSections(filter);
+}
+
+function buildConfigButton() {
+    const openerParent = document.querySelector('#title-container').querySelector('#top-level-buttons-computed');
+    const [openerTemplate] = openerParent.children;
+    const opener = openerTemplate.cloneNode(false);
+
+    openerParent.appendChild(opener);
+    opener.classList.remove('style-blue-text');
+    opener.innerHTML = openerTemplate.innerHTML;
+
+    opener.querySelector('button').innerHTML = openerTemplate.querySelector('button').innerHTML;
+
+    opener.querySelector('a').removeAttribute('href');
+
+    // TODO Build the svg via javascript
+    opener.querySelector('yt-icon').innerHTML = `
+<svg
+    viewBox="0 0 24 24"
+    preserveAspectRatio="xMidYMid meet"
+    focusable="false"
+    style="
+        pointer-events: none;
+        display: block;
+        width: 20px;
+        height: 20px;
+    "
+    class="style-scope yt-icon"
+>
+    <g class="style-scope yt-icon">
+        <path
+            d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.1-1.65c.2-.15.25-.42.13-.64l-2-3.46c-.12-.22-.4-.3-.6-.22l-2.5 1c-.52-.4-1.08-.73-1.7-.98l-.37-2.65c-.06-.24-.27-.42-.5-.42h-4c-.27 0-.48.18-.5.42l-.4 2.65c-.6.25-1.17.6-1.7.98l-2.48-1c-.23-.1-.5 0-.6.22l-2 3.46c-.14.22-.08.5.1.64l2.12 1.65c-.04.32-.07.65-.07.98s.02.66.06.98l-2.1 1.65c-.2.15-.25.42-.13.64l2 3.46c.12.22.4.3.6.22l2.5-1c.52.4 1.08.73 1.7.98l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.6-.25 1.17-.6 1.7-.98l2.48 1c.23.1.5 0 .6-.22l2-3.46c.13-.22.08-.5-.1-.64l-2.12-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"
+            class="style-scope yt-icon"
+        >
+        </path>
+    </g>
+</svg>
+    `;
+
+    opener.addEventListener('click', () => {
+        const promise = kbcConfigure(KEY, TITLE, META, {'zIndex': 10000});
+
+        promise.then((newConfig) => {
+            updateConfig(newConfig);
+        }).catch((error) => {
+            console.error(error);
+
+            if (window.confirm(
+                'An error was thrown by Key-Based Config, indicating that your data may be corrupted.\n' +
+                'Error Message: ' + error + '\n\n' +
+                'Would you like to clear your saved configs?'
+            )) {
+                GM.setValue(KEY, []);
+            }
+        });
+    });
 }
 
 // Main helpers
