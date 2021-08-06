@@ -1,22 +1,24 @@
 // ==UserScript==
 // @name        YouTube Sub Feed Filter
-// @version     1.1
+// @version     1.2
 // @description Filters your YouTube subscriptions feed.
+// @author      Callum Latham
+// @namespace   https://greasyfork.org/users/696211-ctl2
 // @match       *://www.youtube.com/*
 // @match       *://youtube.com/*
-// @namespace   https://greasyfork.org/users/696211-ctl2
 // @require     https://greasyfork.org/scripts/419978-key-based-config/code/Key-Based%20Config.js?version=956708
 // @grant       GM.setValue
 // @grant       GM.getValue
 // ==/UserScript==
 
-// User-configurable options
+// User config
 
-// RegExp flags
-const OPTIONS = 'i';
+const LONG_PRESS_TIME = 400;
+const REGEXP_FLAGS = 'i';
 
-// Data schema
+// Dev config
 
+const FRAME_STYLE = {'zIndex': 10000};
 const ORDERING = {
     'ENABLED': 0,
     'STREAMS': {
@@ -30,18 +32,12 @@ const ORDERING = {
     },
     'OTHERS': 6
 };
-
 const SUB = [];
 
 SUB[ORDERING.ENABLED] = {
     label: 'Enabled',
     type: 'boolean',
     default: true
-};
-SUB[ORDERING.STREAMS.SCHEDULED] = {
-    label: 'Streams (scheduled)',
-    type: 'string',
-    default: '^'
 };
 SUB[ORDERING.STREAMS.SCHEDULED] = {
     label: 'Streams (scheduled)',
@@ -79,11 +75,13 @@ const KEY = 'ytsff';
 const META = {
     label: 'Channels',
     type: 'string',
-    default: '(^Channel Name$)',
+    default: '^Channel Name$',
     sub: SUB
 };
 
-// Collector helpers
+const KEY_IS_ACTIVE = 'ytsff_isActive';
+
+// Video element helpers
 
 function getAllSections() {
     return [...document.querySelectorAll('ytd-item-section-renderer')];
@@ -105,7 +103,7 @@ function getMetadataLine(video) {
     return video.querySelector('#metadata-line');
 }
 
-// Hider helpers
+// Video hiding predicates
 
 class SectionSplitter {
     hideables = [];
@@ -184,6 +182,8 @@ class SectionSplitter {
     }
 }
 
+// Hider functions
+
 function hideSection(section, doHide = true) {
     if (section.matches(':first-child')) {
         const title = section.querySelector('#title');
@@ -215,33 +215,31 @@ function hideVideo(video, doHide = true) {
     }
 }
 
-// Hider
-
-function hideFromSections(filter = [], sections = getAllSections()) {
+function hideFromSections(filters = [], sections = getAllSections()) {
     for (const section of sections) {
         if (section.matches('ytd-continuation-item-renderer')) {
             continue;
         }
 
-        // Collect hideables and non-hideables
         const splitter = new SectionSplitter(section);
 
-        for (const {'value': channel, sub} of filter) {
+        // Separate the section's videos by hideability
+        for (const {'value': channel, sub} of filters) {
             const config = sub.map(({value}) => value);
-            const channelRegex = new RegExp(channel, OPTIONS);
+            const channelRegex = new RegExp(channel, REGEXP_FLAGS);
 
             if (!config[ORDERING.ENABLED]) {
                 continue;
             }
 
-            splitter.splitScheduledStreams(channelRegex, new RegExp(config[ORDERING.STREAMS.SCHEDULED], OPTIONS));
-            splitter.splitLiveStreams(channelRegex, new RegExp(config[ORDERING.STREAMS.LIVE], OPTIONS));
-            splitter.splitFinishedStreams(channelRegex, new RegExp(config[ORDERING.STREAMS.FINISHED], OPTIONS));
+            splitter.splitScheduledStreams(channelRegex, new RegExp(config[ORDERING.STREAMS.SCHEDULED], REGEXP_FLAGS));
+            splitter.splitLiveStreams(channelRegex, new RegExp(config[ORDERING.STREAMS.LIVE], REGEXP_FLAGS));
+            splitter.splitFinishedStreams(channelRegex, new RegExp(config[ORDERING.STREAMS.FINISHED], REGEXP_FLAGS));
 
-            splitter.splitScheduledPremiers(channelRegex, new RegExp(config[ORDERING.PREMIERS.SCHEDULED], OPTIONS));
-            splitter.splitLivePremiers(channelRegex, new RegExp(config[ORDERING.PREMIERS.LIVE], OPTIONS));
+            splitter.splitScheduledPremiers(channelRegex, new RegExp(config[ORDERING.PREMIERS.SCHEDULED], REGEXP_FLAGS));
+            splitter.splitLivePremiers(channelRegex, new RegExp(config[ORDERING.PREMIERS.LIVE], REGEXP_FLAGS));
 
-            splitter.splitOthers(channelRegex, new RegExp(config[ORDERING.OTHERS], OPTIONS));
+            splitter.splitOthers(channelRegex, new RegExp(config[ORDERING.OTHERS], REGEXP_FLAGS));
         }
 
         if (splitter.nonHideables.length === 0) {
@@ -257,8 +255,6 @@ function hideFromSections(filter = [], sections = getAllSections()) {
 }
 
 async function hideFromMutations(mutations) {
-    // Collect new video sections
-    // Today, This week, This month, Older, ...
     const sections = [];
 
     for (const {addedNodes} of mutations) {
@@ -269,8 +265,6 @@ async function hideFromMutations(mutations) {
 
     hideFromSections(await GM.getValue(KEY, []), sections);
 }
-
-// Data storage helpers
 
 function resetConfig() {
     for (const section of getAllSections()) {
@@ -289,148 +283,225 @@ function updateConfig(filter) {
     hideFromSections(filter);
 }
 
-function buildConfigButton() {
-    const openerParent = document.querySelector('#title-container').querySelector('#top-level-buttons-computed');
-    const [openerTemplate] = openerParent.children;
-    const opener = openerTemplate.cloneNode(false);
+// Button
 
-    openerParent.appendChild(opener);
-    opener.classList.remove('style-blue-text');
-    opener.innerHTML = openerTemplate.innerHTML;
+function getButtonDock() {
+    return document
+        .querySelector('ytd-browse[page-subtype="subscriptions"]')
+        .querySelector('#title-container')
+        .querySelector('#top-level-buttons-computed');
+}
 
-    opener.querySelector('button').innerHTML = openerTemplate.querySelector('button').innerHTML;
+class ClickHandler {
+    constructor(button, onShortClick, onLongClick) {
+        this.onShortClick = (function() {
+            onShortClick();
 
-    opener.querySelector('a').removeAttribute('href');
+            window.clearTimeout(this.longClickTimeout);
 
-    // TODO Build the svg via javascript
-    opener.querySelector('yt-icon').innerHTML = `
-<svg
-    viewBox="0 0 24 24"
-    preserveAspectRatio="xMidYMid meet"
-    focusable="false"
-    style="
-        pointer-events: none;
-        display: block;
-        width: 20px;
-        height: 20px;
-    "
-    class="style-scope yt-icon"
->
-    <g class="style-scope yt-icon">
-        <path
-            d="M19.43 12.98c.04-.32.07-.64.07-.98s-.03-.66-.07-.98l2.1-1.65c.2-.15.25-.42.13-.64l-2-3.46c-.12-.22-.4-.3-.6-.22l-2.5 1c-.52-.4-1.08-.73-1.7-.98l-.37-2.65c-.06-.24-.27-.42-.5-.42h-4c-.27 0-.48.18-.5.42l-.4 2.65c-.6.25-1.17.6-1.7.98l-2.48-1c-.23-.1-.5 0-.6.22l-2 3.46c-.14.22-.08.5.1.64l2.12 1.65c-.04.32-.07.65-.07.98s.02.66.06.98l-2.1 1.65c-.2.15-.25.42-.13.64l2 3.46c.12.22.4.3.6.22l2.5-1c.52.4 1.08.73 1.7.98l.37 2.65c.04.24.25.42.5.42h4c.25 0 .46-.18.5-.42l.37-2.65c.6-.25 1.17-.6 1.7-.98l2.48 1c.23.1.5 0 .6-.22l2-3.46c.13-.22.08-.5-.1-.64l-2.12-1.65zM12 15.5c-1.93 0-3.5-1.57-3.5-3.5s1.57-3.5 3.5-3.5 3.5 1.57 3.5 3.5-1.57 3.5-3.5 3.5z"
-            class="style-scope yt-icon"
-        >
-        </path>
-    </g>
+            window.removeEventListener('mouseup', this.onShortClick);
+        }).bind(this);
+
+        this.onLongClick = (function() {
+            window.removeEventListener('mouseup', this.onShortClick);
+
+            onLongClick();
+        }).bind(this);
+
+        this.longClickTimeout = window.setTimeout(this.onLongClick, LONG_PRESS_TIME);
+
+        window.addEventListener('mouseup', this.onShortClick);
+    }
+}
+
+class Button {
+    constructor(pageManager) {
+        this.pageManager = pageManager;
+        this.element = this.getNewButton();
+
+        this.element.addEventListener('mousedown', this.onMouseDown.bind(this));
+
+        GM.getValue(KEY_IS_ACTIVE, true).then((isActive) => {
+            this.isActive = isActive;
+
+            if (isActive) {
+                this.setButtonActive();
+
+                startHiding();
+            }
+        });
+    }
+
+    addToDOM(button = this.element) {
+        const {parentElement} = getButtonDock();
+        parentElement.appendChild(button);
+    }
+
+    getNewButton() {
+        const openerTemplate = getButtonDock().children[1];
+        const button = openerTemplate.cloneNode(false);
+
+        this.addToDOM(button);
+
+        button.innerHTML = openerTemplate.innerHTML;
+
+        button.querySelector('button').innerHTML = openerTemplate.querySelector('button').innerHTML;
+
+        button.querySelector('a').removeAttribute('href');
+
+        // TODO Build the svg via javascript
+        button.querySelector('yt-icon').innerHTML = `
+<svg xmlns="http://www.w3.org/2000/svg" x="0px" y="0px" viewBox="-50 -50 400 400">
+<g>
+<path d="M128.25,175.6c1.7,1.8,2.7,4.1,2.7,6.6v139.7l60-51.3v-88.4c0-2.5,1-4.8,2.7-6.6L295.15,65H26.75L128.25,175.6z"/>
+<rect x="13.95" y="0" width="294" height="45"/>
+</g>
 </svg>
     `;
 
-    opener.addEventListener('click', () => {
-        const promise = kbcConfigure(KEY, TITLE, META, {'zIndex': 10000});
+        return button;
+    }
+
+    hide() {
+        this.element.style.display = 'none';
+    }
+
+    show() {
+        this.element.parentElement.appendChild(this.element);
+        this.element.style.removeProperty('display');
+    }
+
+    setButtonActive() {
+        if (this.isActive) {
+            this.element.classList.add('style-blue-text');
+            this.element.classList.remove('style-opacity');
+        } else {
+            this.element.classList.add('style-opacity');
+            this.element.classList.remove('style-blue-text');
+        }
+    }
+
+    toggleActive() {
+        this.isActive = !this.isActive;
+
+        this.setButtonActive();
+
+        GM.setValue(KEY_IS_ACTIVE, this.isActive);
+
+        if (this.isActive) {
+            this.pageManager.start();
+        } else {
+            this.pageManager.stop();
+        }
+    }
+
+    onLongClick() {
+        const promise = kbcConfigure(KEY, TITLE, META, FRAME_STYLE);
 
         promise.then((newConfig) => {
-            updateConfig(newConfig);
+            if (this.isActive) {
+                updateConfig(newConfig);
+            }
         }).catch((error) => {
             console.error(error);
 
             if (window.confirm(
-                'An error was thrown by Key-Based Config, indicating that your data may be corrupted.\n' +
+                'An error was thrown by Key-Based Config; Your data may be corrupted.\n' +
                 'Error Message: ' + error + '\n\n' +
                 'Would you like to clear your saved configs?'
             )) {
                 GM.setValue(KEY, []);
             }
         });
-    });
-}
-
-// Main helpers
-
-function getRegexArray(stringArray) {
-    return stringArray.map(string => new RegExp(string));
-}
-
-function isGridView() {
-    return document.querySelector('ytd-expanded-shelf-contents-renderer') === null;
-}
-
-function isSubscriptionsPage() {
-    return new RegExp('^.*youtube.com/feed/subscriptions(\\?flow=1|\\?pbjreload=\\d+)?$').test(document.URL);
-}
-
-function trySetPageLoaderOnclick(pageLoader, cssSelector) {
-    if (pageLoader) {
-        if (pageLoader.matches) {
-            if (pageLoader.matches(cssSelector)) {
-                pageLoader.onclick = () => location.assign('https://www.youtube.com/feed/subscriptions');
-
-                return true;
-            }
-        }
     }
 
-    return false;
+    async onMouseDown(event) {
+        if (event.button === 0) {
+            new ClickHandler(this.element, this.toggleActive.bind(this), this.onLongClick.bind(this));
+        }
+    }
 }
 
-function simplifyPageLoader(cssSelector) {
-    if (!trySetPageLoaderOnclick(document.querySelector(cssSelector), cssSelector)) {
-        const pageLoaderObserver = new MutationObserver((newMutations) => {
-            for (const mutation of newMutations) {
-                for (const node of mutation.addedNodes) {
-                    if (trySetPageLoaderOnclick(node, cssSelector)) {
-                        // If button has been found, stop searching
-                        pageLoaderObserver.disconnect();
+// Page load/navigation handler
 
-                        return;
-                    }
+class PageManager {
+    constructor() {
+        this.videoObserver = new MutationObserver(hideFromMutations);
+        window.addEventListener('load', this.onLoad.bind(this));
+    }
+
+    start() {
+        GM.getValue(KEY).then(filters => {
+            hideFromSections(filters);
+        });
+
+        // Call hide function when new videos are loaded
+        this.videoObserver.observe(
+            document.querySelector('ytd-browse[page-subtype="subscriptions"]').querySelector('div#contents'),
+            {childList: true}
+        );
+    }
+
+    stop() {
+        this.videoObserver.disconnect();
+
+        resetConfig();
+    }
+
+    isSubPage() {
+        return new RegExp('^.*youtube.com/feed/subscriptions(\\?flow=1|\\?pbjreload=\\d+)?$').test(document.URL);
+    }
+
+    isGridView() {
+        return document.querySelector('ytd-expanded-shelf-contents-renderer') === null;
+    }
+
+    onLoad() {
+        // Allow configuration
+        if (this.isSubPage() && this.isGridView()) {
+            this.button = new Button(this);
+
+            this.button.show();
+
+            this.start();
+        }
+
+        document.body.addEventListener('yt-navigate-finish', (function({detail}) {
+            this.onNavigate(detail);
+        }).bind(this));
+
+        document.body.addEventListener('popstate', (function({state}) {
+            this.onNavigate(state);
+        }).bind(this));
+    }
+
+    onNavigate({endpoint}) {
+        if (endpoint.browseEndpoint) {
+            const {params, browseId} = endpoint.browseEndpoint;
+
+            if ((params === 'MAE%3D' || (!params && this.isGridView())) && browseId === 'FEsubscriptions') {
+                if (!this.button) {
+                    this.button = new Button(this)
                 }
-            }
-        });
 
-        pageLoaderObserver.observe(document.querySelector('ytd-app'), {
-            'childList': true,
-            'subtree': true
-        });
+                this.button.show();
+
+                this.start();
+
+                GM.getValue(KEY).then(filters => {
+                    hideFromSections(filters);
+                });
+            } else {
+                if (this.button) {
+                    this.button.hide();
+                }
+
+                this.videoObserver.disconnect();
+            }
+        }
     }
 }
 
 // Main
 
-// Hide videos if on the subscriptions page
-if (isSubscriptionsPage() && isGridView()) {
-    // Allow configuration
-    try {
-        buildConfigButton();
-    } catch (e) {
-        const buttonDockObserver = new MutationObserver(() => {
-            try {
-                buildConfigButton();
-                buttonDockObserver.disconnect();
-            } catch (e) {
-                // Button container still not built
-            }
-        });
-
-        buttonDockObserver.observe(
-            document.querySelector('ytd-browse[page-subtype="subscriptions"]').querySelector('div#contents'), {
-                childList: true
-            }
-        );
-    }
-
-    (async () => {
-        // Call hide function on page load
-        hideFromSections(await GM.getValue(KEY));
-    })();
-
-    // Call hide function when new videos are loaded
-    new MutationObserver(hideFromMutations).observe(
-        document.querySelector('ytd-browse[page-subtype="subscriptions"]').querySelector('div#contents'),
-        {childList: true}
-    );
-}
-
-// Make buttons that navigate to the subscriptions feed trigger normal page loads
-simplifyPageLoader('a[title="Subscriptions"]'); // Subscriptions button
-simplifyPageLoader('button#button[aria-label="Switch to grid view"]'); // Grid-view button
+new PageManager();
