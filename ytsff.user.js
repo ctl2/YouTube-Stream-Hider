@@ -6,7 +6,7 @@
 // @namespace   https://greasyfork.org/users/696211-ctl2
 // @match       *://www.youtube.com/*
 // @match       *://youtube.com/*
-// @require     https://greasyfork.org/scripts/419978-key-based-config/code/Key-Based%20Config.js?version=956708
+// @require     https://greasyfork.org/scripts/419978-key-based-config/code/Key-Based%20Config.js
 // @grant       GM.setValue
 // @grant       GM.getValue
 // ==/UserScript==
