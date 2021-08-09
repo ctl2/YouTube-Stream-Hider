@@ -1,6 +1,6 @@
 // ==UserScript==
 // @name        YouTube Sub Feed Filter
-// @version     1.2
+// @version     1.3
 // @description Filters your YouTube subscriptions feed.
 // @author      Callum Latham
 // @namespace   https://greasyfork.org/users/696211-ctl2
@@ -396,7 +396,7 @@ class Button {
     }
 
     onLongClick() {
-        const promise = kbcConfigure(KEY, TITLE, META, FRAME_STYLE);
+        const promise = kbcConfigure(KEY, TITLE, META, false, FRAME_STYLE);
 
         promise.then((newConfig) => {
             if (this.isActive) {
